@@ -145,6 +145,10 @@ class OpenGazeConnection:
 		# OUTGOING
 		# Start a new outgoing Queue (Thread safe, woop!).
 		self._outqueue = Queue()
+		# Set an event that is set when all queued outgoing messages have
+		# been processed.
+		self._sock_ready_for_closing = Event()
+		self._sock_ready_for_closing.clear()
 		# Create a new Thread that processes the outgoing queue.
 		self._outthread = Thread( \
 			target=self._process_outgoing, \
@@ -335,13 +339,17 @@ class OpenGazeConnection:
 		
 		self._debug_print("Outgoing Thread started.")
 		
-		while self._connected.is_set():
+		while not self._sock_ready_for_closing.is_set():
 
 			# Get a new command from the Queue.
 			msg = self._outqueue.get()
 			
-			# Break the while loop if this is the shutdown signal.
+			# Check if this is the shutdown signal.
 			if msg == self._thread_shutdown_signal:
+				# Signal that we're done processing all the outgoing
+				# messages.
+				self._sock_ready_for_closing.set()
+				# Break the while loop.
 				break
 			
 			self._debug_print("Outgoing: %r" % (msg))
@@ -448,6 +456,10 @@ class OpenGazeConnection:
 		self._outqueue.put(self._thread_shutdown_signal)
 		self._debug_print("Adding stop signal to logging Queue")
 		self._logqueue.put(self._thread_shutdown_signal)
+		
+		# Wait for the outgoing Queue to be fully processed.
+		self._debug_print("Waiting for the socket to close...")
+		self._sock_ready_for_closing.wait()
 		
 		# Close the socket connection to the OpenGaze server.
 		self._debug_print("Closing socket connection...")
