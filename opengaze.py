@@ -11,11 +11,8 @@ import time
 import socket
 import datetime
 import lxml.etree
+from multiprocessing import Queue
 from threading import Event, Lock, Thread
-from multiprocessing import Process, Queue
-
-# TODO: OpenGaze
-# Copy EyeTribeParallel functionality.
 
 # TODO: OpenGazeConnection
 # Thread that monitors whether the other threads are still alive, and that
@@ -23,9 +20,12 @@ from multiprocessing import Process, Queue
 # Locks for the log and the DEBUG log.
 
 
-# The OpenGazeConnection class communicates to the GazePoint Server through
+# # # # #
+# OPENGAZE API WRAPPER
+
+# The OpenGazeTracker class communicates to the GazePoint Server through
 # a TCP/IP socket.
-class OpenGazeConnection:
+class OpenGazeTracker:
 
 	def __init__(self, ip='127.0.0.1', port=4242, logfile='default.tsv', \
 		debug=False):
@@ -171,6 +171,120 @@ class OpenGazeConnection:
 		self._inthread.start()
 		self._debug_print("Starting the outgoing thread.")
 		self._outthread.start()
+		
+		# SET UP LOGGING
+		# Wait for a bit to allow the Threads to start.
+		time.sleep(0.5)
+		# Enable the tracker to send ALL the things.
+		self.enable_send_counter(True)
+		self.enable_send_cursor(True)
+		self.enable_send_eye_left(True)
+		self.enable_send_eye_right(True)
+		self.enable_send_pog_best(True)
+		self.enable_send_pog_fix(True)
+		self.enable_send_pog_left(True)
+		self.enable_send_pog_right(True)
+		self.enable_send_pupil_left(True)
+		self.enable_send_pupil_right(True)
+		self.enable_send_time(True)
+		self.enable_send_time_tick(True)
+		self.enable_send_user_data(True)
+		# Reset the user-defined variable.
+		self.user_data("0")
+
+	
+	def calibrate(self):
+		
+		"""Calibrates the eye tracker.
+		"""
+
+		# Reset the calibration to its default points.
+		self.calibrate_reset()
+		# Show the calibration screen.
+		self.calibrate_show(True)
+		# Start the calibration.
+		self.calibrate_start(True)
+		# Wait for the calibration result.
+		result = None
+		while result == None:
+			result = self.get_calibration_result()
+			time.sleep(0.1)
+		# Hide the calibration window.
+		self.calibrate_show(False)
+	
+	def sample(self):
+
+		# If there is no current record yet, return None.
+		if 'REC' not in self._incoming.keys():
+			return None
+		elif 'NO_ID' not in self._incoming.keys():
+			return None
+		elif 'BPOGX' not in self._incoming['REC']['NO_ID'].keys() or \
+			'BPOGY' not in self._incoming['REC']['NO_ID'].keys():
+			return None
+
+		# Return the (x,y) coordinate.
+		return (float(self._incoming['REC']['NO_ID']['BPOGX']), \
+				float(self._incoming['REC']['NO_ID']['BPOGY']))
+	
+	def pupil_size(self):
+		
+		"""Return the current pupil size.
+		"""
+
+		# If there is no current record yet, return None.
+		if 'REC' not in self._incoming.keys():
+			return None
+		elif 'NO_ID' not in self._incoming.keys():
+			return None
+		elif 'LPV' not in self._incoming['REC']['NO_ID'].keys() or \
+			'LPS' not in self._incoming['REC']['NO_ID'].keys() or \
+			'RPV' not in self._incoming['REC']['NO_ID'].keys() or \
+			'RPS' not in self._incoming['REC']['NO_ID'].keys():
+			return None
+
+		# Compute the pupil size, and return it if there is valid data.
+		n = 0
+		psize = 0
+		if str(self._incoming['REC']['NO_ID']['LPV']) == '1':
+			psize += float(self._incoming['REC']['NO_ID']['LPS'])
+			n += 1
+		if str(self._incoming['REC']['NO_ID']['RPV']) == '1':
+			psize += float(self._incoming['REC']['NO_ID']['RPS'])
+			n += 1
+		if n == 0:
+			return None
+		else:
+			return psize / float(n)
+	
+	def log(self, message):
+		
+		"""Logs a message to the log file.
+		"""
+
+		# Set the user-defined value.
+		i = copy.copy(self._logcounter)
+		self.user_data(message)
+		# Wait until a single sample is logged.
+		while self._logcounter <= i:
+			time.sleep(0.0001)
+		# Reset the user-defined value.
+		self.user_data("0")
+	
+	def start_recording(self):
+		
+		"""Start writing data to the log file.
+		"""
+		
+		self.enable_send_data(True)
+	
+	def stop_recording(self):
+		
+		"""Pause writing data to the log file.
+		"""
+		
+		self.enable_send_data(False)
+
 	
 	def _debug_print(self, msg):
 		
