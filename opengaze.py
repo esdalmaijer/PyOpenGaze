@@ -193,13 +193,14 @@ class OpenGazeTracker:
 		self.user_data("0")
 
 	
-	def calibrate(self):
+	def calibrate(self, reset=False):
 		
 		"""Calibrates the eye tracker.
 		"""
 
 		# Reset the calibration to its default points.
-		self.calibrate_reset()
+		if reset:
+			self.calibrate_reset()
 		# Show the calibration screen.
 		self.calibrate_show(True)
 		# Start the calibration.
@@ -211,6 +212,8 @@ class OpenGazeTracker:
 			time.sleep(0.1)
 		# Hide the calibration window.
 		self.calibrate_show(False)
+		
+		return result
 	
 	def sample(self):
 
@@ -259,7 +262,8 @@ class OpenGazeTracker:
 	
 	def log(self, message):
 		
-		"""Logs a message to the log file.
+		"""Logs a message to the log file. ONLY CALL THIS WHILE RECORDING
+		DATA!
 		"""
 
 		# Set the user-defined value.
@@ -1032,19 +1036,30 @@ class OpenGazeTracker:
 		
 		return points
 	
+	def clear_calibration_result(self):
+		
+		"""Clears the internally stored calibration result.
+		"""
+
+		# Clear the calibration results.
+		self._inlock.acquire()
+		if 'CAL' in self._incoming.keys():
+			if 'CALIB_RESULT' in self._incoming['CAL'].keys():
+				self._incoming['CAL'].pop('CALIB_RESULT')
+		self._inlock.release()
+	
 	def get_calibration_result(self):
 		
 		"""Returns the latest available calibration results as a list of
 		dicts, each with the following keys:
-		CALXn: Calibration point's horizontal coordinate.
-		CALYn: Calibration point's vertical coordinate
-		LXn:   Left eye's recorded horizontal point of gaze.
-		LYn:   Left eye's recorded vertical point of gaze.
-		LVn:   Left eye's validity status (1=valid, 0=invalid)
-		RXn:   Right eye's recorded horizontal point of gaze.
-		RYn:   Right eye's recorded vertical point of gaze.
-		RVn:   Right eye's validity status (1=valid, 0=invalid)
-		(Where n is the point's number, counting from 1.)
+		CALX: Calibration point's horizontal coordinate.
+		CALY: Calibration point's vertical coordinate
+		LX:   Left eye's recorded horizontal point of gaze.
+		LY:   Left eye's recorded vertical point of gaze.
+		LV:   Left eye's validity status (1=valid, 0=invalid)
+		RX:   Right eye's recorded horizontal point of gaze.
+		RY:   Right eye's recorded vertical point of gaze.
+		RV:   Right eye's validity status (1=valid, 0=invalid)
 		
 		Returns None if no calibration results are available.
 		"""
@@ -1054,12 +1069,11 @@ class OpenGazeTracker:
 		
 		# Return the result.
 		points = None
+		self._inlock.acquire()
 		if 'CAL' in self._incoming.keys():
 			if 'CALIB_RESULT' in self._incoming['CAL'].keys():
 				# Get the latest calibration results.
-				self._inlock.acquire()
 				cal = copy.deepcopy(self._incoming['CAL']['CALIB_RESULT'])
-				self._inlock.release()
 				# Compute the number of fixation points by dividing the
 				# total number of parameters in the 'CALIB_RESULT' dict
 				# by 8 (the number of parameters per point). Note that
@@ -1072,8 +1086,9 @@ class OpenGazeTracker:
 				for i in range(1, n_points+1):
 					p = {}
 					for par in params:
-						p['%s%d' % (par, i)] = cal['%s%d' % (par, i)]
+						p['%s' % (par, i)] = cal['%s%d' % (par, i)]
 					points.append(copy.deepcopy(p))
+		self._inlock.release()
 		
 		return points
 	
