@@ -6,6 +6,7 @@
 # Version 1 (27-Apr-2016)
 
 import os
+import re         
 import copy
 import time
 import socket
@@ -58,8 +59,8 @@ class OpenGazeTracker:
 		# Open a new debug file.
 		if self._debug:
 			dt = time.strftime("%Y-%m-%d_%H-%M-%S")
-			self._debuglog = open('debug_%s.txt' % (dt), 'w')
-			self._debuglog.write("OPENGAZE PYTHON DEBUG LOG %s\n" % (dt))
+			self._debuglog = open('debug_{}.txt'.format(dt), 'w')
+			self._debuglog.write("OPENGAZE PYTHON DEBUG LOG {}\n".format(dt))
 			self._debugcounter = 0
 			self._debugconsolidatefreq = 100
 		
@@ -70,7 +71,7 @@ class OpenGazeTracker:
 		# Start a new TCP/IP socket. It is curcial that it has a timeout,
 		# as timeout exceptions will be handled gracefully, and are in fact
 		# necessary to prevent the incoming Thread from freezing.
-		self._debug_print("Connecting to %s (%s)..." % (self.host, self.port))
+		self._debug_print("Connecting to {} ({})...".format(self.host, self.port))
 		self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self._sock.connect((self.host, self.port))
 		self._sock.settimeout(1.0)
@@ -86,7 +87,7 @@ class OpenGazeTracker:
 		self._current_calibration_point = None
 		
 		# LOGGING
-		self._debug_print("Opening new logfile '%s'" % (logfile))
+		self._debug_print("Opening new logfile '{}'".format(logfile))
 		# Open a new log file.
 		self._logfile = open(logfile, 'w')
 		# Write the header to the log file.
@@ -100,6 +101,13 @@ class OpenGazeTracker:
 			'LEYEX', 'LEYEY', 'LEYEZ', 'LPUPILD', 'LPUPILV', \
 			'REYEX', 'REYEY', 'REYEZ', 'RPUPILD', 'RPUPILV', \
 			'CX', 'CY', 'CS', \
+			'BKID', 'BKDUR', 'BKPMIN', \
+			'LPMM', 'LPMMV', 'RPMM', 'RPMMV', \
+			'DIAL', 'DIALV', \
+			'GSR', 'GSRV', \
+			'HR', 'HRV', \
+			'HRP', \
+			'TTL0', 'TTL1', 'TTLV', \
 			'USER']
 		self._n_logvars = len(self._logheader)
 		self._logfile.write('\t'.join(self._logheader) + '\n')
@@ -190,6 +198,13 @@ class OpenGazeTracker:
 		self.enable_send_pupil_right(True)
 		self.enable_send_time(True)
 		self.enable_send_time_tick(True)
+		self.enable_send_blink(True)
+		self.enable_send_pupilmm(True)
+		self.enable_send_dial(True)
+		self.enable_send_gsr(True)
+		self.enable_send_heart_rate(True)
+		self.enable_send_heart_rate_pulse(True)
+		self.enable_send_ttl(True)
 		self.enable_send_user_data(True)
 		# Reset the user-defined variable.
 		self.user_data("0")
@@ -305,8 +320,8 @@ class OpenGazeTracker:
 	def _debug_print(self, msg):
 		
 		if self._debug:
-			self._debuglog.write('%s: %s\n' % \
-				(datetime.datetime.now().strftime("%H:%M:%S.%f"), msg))
+			self._debuglog.write('{}: {}\n'.format( \
+				datetime.datetime.now().strftime("%H:%M:%S.%f"), msg))
 			if self._debugcounter % self._debugconsolidatefreq == 0:
 				self._debuglog.flush()
 				os.fsync(self._debuglog.fileno())
@@ -315,11 +330,11 @@ class OpenGazeTracker:
 	def _format_msg(self, command, ID, values=None):
 		
 		# Create the start of the formatted string.
-		xml = '<%s ID="%s" ' % (command.upper(), ID.upper())
+		xml = '<{} ID="{}" '.format(command.upper(), ID.upper())
 		# Add the values for each parameter.
 		if values:
 			for par, val in values:
-				xml += '%s="%s" ' % (par.upper(), val)
+				xml += '{}="{}" '.format(par.upper(), val)
 		# Add the ending.
 		xml += '/>\r\n'
 		
@@ -347,6 +362,16 @@ class OpenGazeTracker:
 
 	def _parse_msg(self, xml):
 		
+#        # Fix for GazePoint API bug.
+#          if xml == '<ACK ID="USER_DATA" VALUE="0"DUR="0" />':
+#            xml = '<ACK ID="USER_DATA" VALUE="0" DUR="0" />'
+
+		# Attempt to fix all malformed XML strings. (GazePoint frequently
+		# manages to send malformed XML messages, which causes an error for
+		# lxml decoding.)
+		xml = re.sub(r'(=".+?")', r'\1 ', xml)
+
+		# Parse the xml string.                            
 		e = lxml.etree.fromstring(xml)
 	
 		return (e.tag, e.attrib)
@@ -393,6 +418,8 @@ class OpenGazeTracker:
 			timeout = False
 			try:
 				instring = self._sock.recv(self._maxrecvsize)
+				instring = instring.decode("utf-8")
+				
 			except socket.timeout:
 				timeout = True
 			# Get a received timestamp.
@@ -405,7 +432,7 @@ class OpenGazeTracker:
 				self._debug_print("socket recv timeout")
 				continue
 
-			self._debug_print("Raw instring: %r" % (instring))
+			self._debug_print(r"Raw instring: {}".format(instring))
 
 			# Split the messages (they are separated by '\r\n').
 			messages = instring.split('\r\n')
@@ -423,7 +450,7 @@ class OpenGazeTracker:
 			
 			# Run through all messages.
 			for msg in messages:
-				self._debug_print("Incoming: %r" % (msg))
+				self._debug_print(r"Incoming: {}".format(msg))
 				# Parse the message.
 				command, msgdict = self._parse_msg(msg)
 				# Check if the incoming message is an acknowledgement.
@@ -482,14 +509,14 @@ class OpenGazeTracker:
 				# Break the while loop.
 				break
 			
-			self._debug_print("Outgoing: %r" % (msg))
+			self._debug_print(r"Outgoing: {}".format(msg))
 
 			# Lock the socket to prevent other Threads from simultaneously
 			# accessing it.
 			self._socklock.acquire()
 			# Send the command to the OpenGaze Server.
 			t = time.time()
-			self._sock.send(msg)
+			self._sock.send(msg.encode("utf-8"))
 			# Unlock the socket again.
 			self._socklock.release()
 			
@@ -515,7 +542,7 @@ class OpenGazeTracker:
 		while (not acknowledged) and (not timeout):
 
 			# Add the command to the outgoing Queue.
-			self._debug_print("Outqueue add: %r" % (msg))
+			self._debug_print(r"Outqueue add: {}".format(msg))
 			self._outqueue.put(msg)
 
 			# Wait until an acknowledgement comes in.
@@ -532,8 +559,7 @@ class OpenGazeTracker:
 						if msg in self._outlatest.keys():
 							t = copy.copy(self._outlatest[msg])
 							sent = True
-							self._debug_print("Outqueue sent: %r" \
-								% (msg))
+							self._debug_print(r"Outqueue sent: {}".format(msg))
 						self._outlock.release()
 						time.sleep(0.001)
 
@@ -546,8 +572,7 @@ class OpenGazeTracker:
 						if ID in self._acknowledgements.keys():
 							if self._acknowledgements[ID] >= t:
 								acknowledged = True
-								self._debug_print("Outqueue acknowledged: %r" \
-									% (msg))
+								self._debug_print(r"Outqueue acknowledged: {}".format(msg))
 						self._acklock.release()
 						time.sleep(0.001)
 
@@ -866,6 +891,144 @@ class OpenGazeTracker:
 		# Return a success Boolean.
 		return acknowledged and (timeout==False)
 
+	def enable_send_blink(self, state):
+		
+		"""Enable (state=True) or disable (state=False) the inclusion of
+		data on the blinks in the data record string. This data
+		consists of the following:
+		BKID:   Each blink is assigned an ID value and incremented by one. 
+			The BKID value equals 0 for every record where no blink has been 
+			detected.
+		BKDUR:  The duration of the preceding blink in seconds.
+		BKPMIN: The number of blinks in the previous 60 second period of time.
+		"""
+
+		# Send the message (returns after the Server acknowledges receipt).
+		acknowledged, timeout = self._send_message('SET', \
+			'ENABLE_SEND_BLINK', \
+			values=[('STATE', int(state))], \
+			wait_for_acknowledgement=True)
+		
+		# Return a success Boolean.
+		return acknowledged and (timeout==False)
+
+	def enable_send_pupilmm(self, state):
+		
+		"""Enable (state=True) or disable (state=False) the inclusion of
+		data on pupil diameter in the data record string. This data
+		consists of the following:
+		LPMM:   The diameter of the left eye pupil in millimeters.
+		LPMMV:  The valid flag with value of 1 if the data is valid, and 0 
+			if it is not.
+		RPMM:   The diameter of the right eye pupil in millimeters.
+		RPMMV:  The valid flag with value of 1 if the data is valid, and 0
+			if it is not.
+		"""
+
+		# Send the message (returns after the Server acknowledges receipt).
+		acknowledged, timeout = self._send_message('SET', \
+			'ENABLE_SEND_PUPILMM', \
+			values=[('STATE', int(state))], \
+			wait_for_acknowledgement=True)
+		
+		# Return a success Boolean.
+		return acknowledged and (timeout==False)
+
+	def enable_send_dial(self, state):
+		
+		"""Enable (state=True) or disable (state=False) the inclusion of
+		data on the biometrics analog self-reporting dial value in the data 
+		record string. This data consists of the following:
+		DIAL:   The dial value from 0 to 1.
+		DIALV:  The valid flag with value of 1 if the data is valid, and 0
+			if it is not
+		"""
+
+		# Send the message (returns after the Server acknowledges receipt).
+		acknowledged, timeout = self._send_message('SET', \
+			'ENABLE_SEND_DIAL', \
+			values=[('STATE', int(state))], \
+			wait_for_acknowledgement=True)
+		
+		# Return a success Boolean.
+		return acknowledged and (timeout==False)
+
+	def enable_send_gsr(self, state):
+		
+		"""Enable (state=True) or disable (state=False) the inclusion of
+		data on the biometrics galvanic skin response resistance in the data 
+		record string. This data consists of the following:
+		GSR:    The skin resistance in ohms.
+		GSRV:   The valid flag with value of 1 if the data is valid, and 0 
+			if it is not. 
+		"""
+
+		# Send the message (returns after the Server acknowledges receipt).
+		acknowledged, timeout = self._send_message('SET', \
+			'ENABLE_SEND_GSR', \
+			values=[('STATE', int(state))], \
+			wait_for_acknowledgement=True)
+		
+		# Return a success Boolean.
+		return acknowledged and (timeout==False)
+
+	def enable_send_heart_rate(self, state):
+		
+		"""Enable (state=True) or disable (state=False) the inclusion of
+		data on biometrics heart rate in the data record string. This data
+		consists of the following:
+		HR:     The heart rate in BPM.
+		HRV:    The valid flag with value of 1 if the data is valid, and 0 
+			if it is not.
+		"""
+
+		# Send the message (returns after the Server acknowledges receipt).
+		acknowledged, timeout = self._send_message('SET', \
+			'ENABLE_SEND_HR', \
+			values=[('STATE', int(state))], \
+			wait_for_acknowledgement=True)
+		
+		# Return a success Boolean.
+		return acknowledged and (timeout==False)
+
+	def enable_send_heart_rate_pulse(self, state):
+		
+		"""Enable (state=True) or disable (state=False) the inclusion of
+		data on the biometrics heart rate pulse signal in the data record 
+		string. This data consists of the following:
+		HRP:    The heart rate pulse signal.
+		"""
+
+		# Send the message (returns after the Server acknowledges receipt).
+		acknowledged, timeout = self._send_message('SET', \
+			'ENABLE_SEND_HR_PULSE', \
+			values=[('STATE', int(state))], \
+			wait_for_acknowledgement=True)
+		
+		# Return a success Boolean.
+		return acknowledged and (timeout==False)
+
+	def enable_send_ttl(self, state):
+		
+		"""Enable (state=True) or disable (state=False) the inclusion of
+		data on the biometrics analog (TTL0) and digital (TTL1) Input/Output 
+		channels. in the data record string. This data consists of the 
+		following:
+		TTL0:   The analog value of channel 0 (0-1023).
+		TTL1:   The digital value of channel 1 (0-1).
+		TTLV:   The valid flag with value of 1 if the sensor cable is connected,
+			and 0 if it is not. 
+		"""
+
+		# Send the message (returns after the Server acknowledges receipt).
+		acknowledged, timeout = self._send_message('SET', \
+			'ENABLE_SEND_TTL', \
+			values=[('STATE', int(state))], \
+			wait_for_acknowledgement=True)
+		
+		# Return a success Boolean.
+		return acknowledged and (timeout==False)
+
 	def enable_send_user_data(self, state):
 		
 		"""Enable (state=True) or disable (state=False) the inclusion of
@@ -1041,12 +1204,12 @@ class OpenGazeTracker:
 		if acknowledged:
 			points = []
 			self._inlock.acquire()
-			for i in range(self._incoming['ACK']['CALIBRATE_ADDPOINT']['PTS']):
+			for i in range(int(self._incoming['ACK']['CALIBRATE_ADDPOINT']['PTS'])):
 				points.append( \
+					(copy.copy(float( \
+						self._incoming['ACK']['CALIBRATE_ADDPOINT']['X{}'.format(int(i+1))])), \
 					copy.copy(float( \
-						self._incoming['ACK']['CALIBRATE_ADDPOINT']['X%d' % i+1])), \
-					copy.copy(float( \
-						self._incoming['ACK']['CALIBRATE_ADDPOINT']['Y%d' % i+1])) \
+						self._incoming['ACK']['CALIBRATE_ADDPOINT']['Y{}'.format(int(i+1))]))) \
 					)
 			self._inlock.release()
 		
@@ -1103,9 +1266,9 @@ class OpenGazeTracker:
 					p = {}
 					for par in params:
 						if par in ['LV', 'RV']:
-							p['%s' % (par)] = cal['%s%d' % (par, i)] == '1'
+							p['{}'.format(par)] = cal['{}{}'.format(par, i)] == '1'
 						else:
-							p['%s' % (par)] = float(cal['%s%d' % (par, i)])
+							p['{}'.format(par)] = float(cal['{}{}'.format(par, i)])
 					points.append(copy.deepcopy(p))
 		self._inlock.release()
 		
